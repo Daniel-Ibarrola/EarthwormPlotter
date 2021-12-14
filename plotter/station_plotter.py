@@ -6,6 +6,7 @@ from matplotlib.figure import Figure
 import numpy as np
 import PyEW
 # Standard library
+from collections import deque
 import queue
 import time
 import tkinter as tk
@@ -30,10 +31,10 @@ wave_queue = queue.Queue()
 # Samples
 sample_rate = 200
 n_samples = 250
-# Flag to stop program
-STOP = False
-# Flag to start plotting
-PLOT = False
+# Flags
+STOP = False # to stop pyearthworm 
+PLOT = False # to start plotting
+
 # Dictionary with the min and max values of data for each station
 station_boundaries = {
     'SS60': {'HLN': [-315638, -315404], 
@@ -72,12 +73,16 @@ station_boundaries = {
 }
 
 # Plotting variables
-vertical_lower_limit = station_boundaries[station][channel][0]
-vertical_upper_limit = station_boundaries[station][channel][1]
-y_data = []
-x_data = []
-x_size = n_samples * 20 # Size of x axis
-x_lower_lim = 0
+acc_lower_lim = station_boundaries[station][channel][0]
+acc_upper_lim = station_boundaries[station][channel][1]
+time_lower_lim = 0 
+time_upper_lim = 60 # time in seconds
+acc_data_queue = deque()
+time_data = []
+time_size = (n_samples / 2) * time_upper_lim # Size of time axis
+time_lower_lim = 0
+counter = 0
+wave_splitter = np.arange(0, 250, 2) # To take just half the samples
         
 def recieve_wave():
     """ Receieve wave data from Earthworm and put it in a queue.
@@ -98,43 +103,46 @@ def plot_data():
     global PLOT
     global ax, canvas, lines, root
     global counter
-    global vertical_lower_limit, vertical_upper_limit
-    global x_data, y_data, x_lower_lim, x_size
-    update_vertical_range = False
+    global acc_lower_lim, acc_upper_lim
+    global time_data, acc_data, time_lower_lim, time_size
+
+    update_vertical_range = True
+    step = int(n_samples / 2)
     
     if PLOT:
         
         wave = wave_queue.get()
-        
-        y_data += wave["data"].tolist()
-        if x_data:
-            x_data += list(range(x_data[-1] + 1, x_data[-1] + n_samples + 1))
-        else:
-            x_data = list(range(0, n_samples))
-        
-        if len(y_data) == x_size:
-            # Dynamically resize the x axis
-            x_lower_lim = int(x_data[-1] - x_size / 2)
-            ax.set_xlim(x_lower_lim, x_lower_lim + x_size)
-            
-            y_data = y_data[int(len(y_data) / 2) - 1: -1]
-            x_data = x_data[int(len(x_data) / 2) - 1: -1]
-            assert len(y_data) == x_size / 2, f"Y lenght is {len(y_data)}"
-            assert len(x_data) == x_size / 2, f"X lenght is {len(x_data)}"
-            
-        assert len(y_data) <= x_size, f"Y data length is {len(y_data)}"
-        assert len(y_data) == len(x_data), f"Y length is {len(y_data)} and X is {len(x_data)}"
+   
+        if len(time_data) == 0:
+            time_data = list(range(0, step))
+            acc_data_queue.append(wave["data"][wave_splitter])
+        elif len(time_data) < time_size:
+            counter += step
+            time_data += list(range(counter + 1, counter + step + 1))
+            acc_data_queue.append(wave["data"][wave_splitter])
+        elif len(time_data) == time_size:
+            acc_data_queue.popleft()
+            acc_data_queue.appendleft(wave["data"][wave_splitter])
         
         if update_vertical_range:
+            # Dynamically resize the vertical axis
             wave_min = np.min(wave["data"])
             wave_max = np.max(wave["data"]) 
-            if wave_min < vertical_lower_limit:
-                vertical_lower_limit = wave_min
-            if wave_max > vertical_upper_limit:
-                vertical_upper_limit = wave_max
-            
-        lines.set_xdata(x_data)
-        lines.set_ydata(y_data)
+            if wave_min < acc_lower_lim:
+                acc_lower_lim = wave_min
+                ax.set_ylim(int(acc_lower_lim), int(acc_upper_lim))
+            if wave_max > acc_upper_lim:
+                acc_upper_lim = wave_max
+                ax.set_ylim(int(acc_lower_lim), int(acc_upper_lim))
+        
+        acc_data = np.array(acc_data_queue).reshape(-1)
+        assert acc_data.shape[0] <= time_size, f"Acc data length is {len(acc_data)}"
+        assert acc_data.shape[0] == len(time_data), f"Acc length is {len(acc_data)} and Time is {len(time_data)}"
+        
+        # print(time_data)
+        # print(acc_data)
+        lines.set_xdata(time_data)
+        lines.set_ydata(acc_data)
         
         wave_queue.task_done()
         time.sleep(0.1)
@@ -152,13 +160,15 @@ def plot_stop():
     
    
 def main():
-    """ Main function of the program. It creates a thread for receiveing data
-        and another thread for processing and saving it.
+    """ Main function of the program. It creates a thread for receieving data
+        and the GUI that contains the plot.
     """
     
     global STOP
     global ax, canvas, lines
     global root
+    
+    unit = "s"
     
     t1 = threading.Thread(target=recieve_wave, daemon=True)
     t1.start()
@@ -170,12 +180,20 @@ def main():
 
     fig = Figure()
     ax = fig.add_subplot(111)
-
+    
     ax.set_title(f'Estación: {station}. Canal: {channel}')
-    ax.set_xlabel('Tiempo')
+    ax.set_xlabel(f'Tiempo ({unit})')
     ax.set_ylabel('Frecuencia')
-    ax.set_xlim(x_lower_lim, x_size)
-    ax.set_ylim(int(vertical_lower_limit*1.0001), int(vertical_upper_limit*1.0001))
+    ax.set_xlim(time_lower_lim, time_size)
+    ax.set_ylim(int(acc_lower_lim), int(acc_upper_lim))
+    # Set xticks for the plot
+    if unit == "s":
+        step = int((n_samples / 2) * 10)
+        ax.set_xticks(np.arange(0, time_size + step, time_size / 6, dtype=np.int64))
+        ax.set_xticklabels(list(range(0, time_upper_lim + 10, 10)))
+    else:
+        raise NotImplementedError
+    
     lines = ax.plot([],[])[0]
 
     canvas = FigureCanvasTkAgg(fig, master=root)  
@@ -204,6 +222,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# Idea: plot wave based on time. So the plot will range from 0 to 24 hrs or from 0 to 60 minutes.
