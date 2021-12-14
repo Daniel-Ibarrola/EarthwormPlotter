@@ -3,6 +3,7 @@
 # Third Party
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 import numpy as np
 import PyEW
 # Standard library
@@ -80,7 +81,6 @@ time_upper_lim = 60 # time in seconds
 acc_data_queue = deque()
 time_data = []
 time_size = (n_samples / 2) * time_upper_lim # Size of time axis
-time_lower_lim = 0
 counter = 0
 wave_splitter = np.arange(0, 250, 2) # To take just half the samples
         
@@ -178,6 +178,8 @@ def main():
     root.configure(background = 'light blue')
     root.geometry("800x600") # set the window size
 
+    plt.style.use('bmh')
+
     fig = Figure()
     ax = fig.add_subplot(111)
     
@@ -194,7 +196,12 @@ def main():
     else:
         raise NotImplementedError
     
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
     lines = ax.plot([],[])[0]
+    lines.alpha = 0.5
+    lines.set_color("#B03A2E")
 
     canvas = FigureCanvasTkAgg(fig, master=root)  
     # A tkinter drawing area.
