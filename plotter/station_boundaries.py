@@ -6,6 +6,7 @@ import numpy as np
 import PyEW
 # Standard library
 from collections import defaultdict
+import pickle
 import queue
 import time
 import threading
@@ -98,7 +99,8 @@ def main():
         STOP = True
         print("Stations Dictionary\n")
         print(dict(station_boundaries))
-        
+        with open("station_boundaries", "wb") as f:
+            pickle.dump(station_boundaries, f)
         print('\n\n=============')
         print('Exit Main Loop...')    
 
