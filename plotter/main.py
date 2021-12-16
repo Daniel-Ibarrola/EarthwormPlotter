@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import PyEW
 # Standard library
-from collections import deque
+import logging
 import pickle
 import time
 import tkinter as tk
@@ -23,7 +23,19 @@ channel = "HLN"
 wave_queue = Queue()
 # Plotting configuration
 plt.style.use('bmh')
-# TODO: add logging
+# Logging 
+logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+rootLogger = logging.getLogger()
+# logging file handler
+fileHandler = logging.FileHandler("../logs/main.log")
+fileHandler.setFormatter(logFormatter)
+rootLogger.addHandler(fileHandler)
+# logging console handler
+consoleHandler = logging.StreamHandler()
+consoleHandler.setFormatter(logFormatter)
+rootLogger.addHandler(consoleHandler)
+rootLogger.setLevel(logging.INFO)
+
 
 ### The GUI class and methods    
 class PlotterApp:
@@ -49,6 +61,8 @@ class PlotterApp:
         self.time_size = (self.n_samples / 2) * self.time_upper_lim # Size of time axis
         # Plotting Flag
         self.PLOT = False
+        # To check if we have data in the queue. If it passes a treshold the stop_plot method will be called
+        self.data_status = 0
         
         # Baic config of the app gui
         self.root = root
@@ -84,8 +98,12 @@ class PlotterApp:
                                   font=('calbiri', 18),
                                   command=self.plot_stop)
 
-        self.label_1 = tk.Label(master=self.options_frame, text="Estación", font=("calbiri", 20), background="white")
-        self.label_2 = tk.Label(master=self.options_frame, text="Canal", font=("calbiri", 20), background="white")
+        self.status_val = tk.StringVar(root)
+        self.status_val.set("Conectado")
+        self.station_label = tk.Label(master=self.options_frame, text="Estación", font=("calbiri", 20), background="white")
+        self.channel_label = tk.Label(master=self.options_frame, text="Canal", font=("calbiri", 20), background="white")
+        self.status_label = tk.Label(master=self.options_frame, textvariable=self.status_val, 
+                                     font=("calbiri", 20), background="white")
 
         self.station_val = tk.StringVar(root)
         self.channel_val = tk.StringVar(root)
@@ -103,12 +121,12 @@ class PlotterApp:
         self.station_button = tk.Button(master=self.options_frame, text="Seleccionar", command=self.update_station)
         self.channel_button = tk.Button(master=self.options_frame, text="Seleccionar", command=self.update_channel)
 
-
         self.button_2.grid(row=0, column=1, padx=5, pady=4)
         self.button_1.grid(row=0, column=0, padx=5, pady=4)
 
-        self.label_1.grid(row=0, column=2, padx=5, pady=4)
-        self.label_2.grid(row=0, column=3, padx=5, pady=4)
+        self.station_label.grid(row=0, column=2, padx=5, pady=4)
+        self.channel_label.grid(row=0, column=3, padx=5, pady=4)
+        self.status_label.grid(row=0, column=4, padx=5, pady=4)
 
         self.station_menu.grid(row=1, column=2, padx=2, pady=10, sticky="EW")
         self.channel_menu.grid(row=1, column=3, padx=2, pady=10, sticky="EW")
@@ -179,6 +197,8 @@ class PlotterApp:
         self.plot_stop()
         self.restart_plot()
         
+        logging.info(f"Changed Station to {station}. Current channel: {channel}")
+        
 
     def update_channel(self):
         """ Updates the plot after selecting a different channel in the program
@@ -195,6 +215,8 @@ class PlotterApp:
         self.plot_stop()    
         self.restart_plot()
         
+        logging.info(f"Changed channel to {channel}. Current {station}")
+        
     def plot_data(self):
         """ Plot wave data from station"""
 
@@ -203,50 +225,62 @@ class PlotterApp:
         
         if self.PLOT:
             
-            wave = wave_queue.get()
+            if not wave_queue.empty():
+                wave = wave_queue.get()
 
-            # When the plot starts time_data needs to be updated dinamically. Once it reaches the time limit
-            # it is no longer necesary to update time_data as the new wave data that arrives will be superimposed
-            # on the previous data.
-            if len(self.time_data) == 0:
-                self.time_data = list(range(0, step))
-                self.acc_data.append(wave["data"][self.wave_splitter])
-            elif len(self.time_data) < self.time_size:
-                self.time_step_counter += step
-                self.time_data += list(range(self.time_step_counter + 1, self.time_step_counter + step + 1))
-                self.acc_data.append(wave["data"][self.wave_splitter])
-            elif len(self.time_data) == self.time_size:
-                # Here each sublist of acc_data will be replaced by the corresponding timestep. But time_data
-                # stays fixed.
-                if self.acc_data_counter >= self.time_upper_lim:
-                    self.acc_data_counter = 0
-                self.acc_data[self.acc_data_counter] = wave["data"][self.wave_splitter]
-                self.acc_data_counter += 1
-            
-            if update_vertical_range:
-                # Dynamically resize the vertical axis in case wave samples with a higher or lower value than the
-                # limits if the vertical axis are found.  
-                wave_min = np.min(wave["data"])
-                wave_max = np.max(wave["data"]) 
-                if wave_min < self.acc_lower_lim:
-                    self.acc_lower_lim = wave_min
-                    self.ax.set_ylim(int(self.acc_lower_lim), int(self.acc_upper_lim))
-                if wave_max > self.acc_upper_lim:
-                    self.acc_upper_lim = wave_max
-                    self.ax.set_ylim(int(self.acc_lower_lim), int(self.acc_upper_lim))
-            
-            acc_data = np.array(self.acc_data).reshape(-1)
-            assert acc_data.shape[0] <= self.time_size, f"Acc data length is {len(acc_data)}"
-            assert acc_data.shape[0] == len(self.time_data), f"Acc length is {len(acc_data)} and Time is {len(self.time_data)}"
-            
-            # print(self.time_data)
-            # print(acc_data)
-            self.lines.set_xdata(self.time_data)
-            self.lines.set_ydata(acc_data)
-            
-            wave_queue.task_done()
-            time.sleep(0.1)
-            self.canvas.draw()
+                # When the plot starts time_data needs to be updated dinamically. Once it reaches the time limit
+                # it is no longer necesary to update time_data as the new wave data that arrives will be superimposed
+                # on the previous data.
+                if len(self.time_data) == 0:
+                    self.time_data = list(range(0, step))
+                    self.acc_data.append(wave["data"][self.wave_splitter])
+                elif len(self.time_data) < self.time_size:
+                    self.time_step_counter += step
+                    self.time_data += list(range(self.time_step_counter + 1, self.time_step_counter + step + 1))
+                    self.acc_data.append(wave["data"][self.wave_splitter])
+                elif len(self.time_data) == self.time_size:
+                    # Here each sublist of acc_data will be replaced by the corresponding timestep. But time_data
+                    # stays fixed.
+                    if self.acc_data_counter >= self.time_upper_lim:
+                        self.acc_data_counter = 0
+                    self.acc_data[self.acc_data_counter] = wave["data"][self.wave_splitter]
+                    self.acc_data_counter += 1
+                
+                if update_vertical_range:
+                    # Dynamically resize the vertical axis in case wave samples with a higher or lower value than the
+                    # limits if the vertical axis are found.  
+                    wave_min = np.min(wave["data"])
+                    wave_max = np.max(wave["data"]) 
+                    if wave_min < self.acc_lower_lim:
+                        self.acc_lower_lim = wave_min
+                        self.ax.set_ylim(int(self.acc_lower_lim), int(self.acc_upper_lim))
+                    if wave_max > self.acc_upper_lim:
+                        self.acc_upper_lim = wave_max
+                        self.ax.set_ylim(int(self.acc_lower_lim), int(self.acc_upper_lim))
+                
+                acc_data = np.array(self.acc_data).reshape(-1)
+                assert acc_data.shape[0] <= self.time_size, f"Acc data length is {len(acc_data)}"
+                assert acc_data.shape[0] == len(self.time_data), f"Acc length is {len(acc_data)} and Time is {len(self.time_data)}"
+                
+                # print(self.time_data)
+                # print(acc_data)
+                self.lines.set_xdata(self.time_data)
+                self.lines.set_ydata(acc_data)
+                
+                wave_queue.task_done()
+                time.sleep(0.1)
+                self.canvas.draw()
+                if self.data_status > 0:
+                    self.cahnge_status()
+                    self.data_status = 0
+            else:
+                logging.warning("wave queue is empty")
+                if self.data_status > 10:
+                    logging.info("No data in queue. Stopping plot.")
+                    self.plot_stop()
+                    self.change_status()
+                self.data_status += 1
+                time.sleep(1)
         
         self.root.after(1, self.plot_data)
     
@@ -286,6 +320,15 @@ class PlotterApp:
             stations_dict[st] = list(ch.keys())
         
         return station_boundaries, stations_dict
+    
+    def change_status(self):
+        """ To display a label in the gui when no data is being recieved."""
+        if self.status_val.get() == "Conectado":
+            self.status_val.set("Desconectado")     
+            self.status_label.config(fg="red")
+        else:
+            self.status_val.set("Conectado")
+            self.station_label.config(fg="black")
         
     def start(self):
         """ Starts tkinter mainloop"""
@@ -306,7 +349,11 @@ class EarthwormWaveAcquirer:
         self.data_mod = PyEW.EWModule(ring, module_id, installation_id, heart_beats, debug)
         self.data_mod.add_ring(1000)
         
-        self.thread = threading.Thread(target=self.recieve_wave, daemon=True)
+        logging.info(f"Created pyearthworm module with id: {module_id}, installation: {installation_id}"
+                    f",ring: {ring}")
+        
+        self.recieve_thread = threading.Thread(target=self.recieve_wave, daemon=True)
+        self.check_status_thread = threading.Thread(target=self.check_status, daemon=True)
         
         self.STOP = False # flag to stop pyearthworm 
         
@@ -316,6 +363,7 @@ class EarthwormWaveAcquirer:
             Only data from the selected station and channel will be plotted.
         """
         ring_index = 0
+        self.counter = 0 # To keep track of whether data is being recieved.
         while True:
             if self.STOP:
                 return 
@@ -323,27 +371,45 @@ class EarthwormWaveAcquirer:
             wave = self.data_mod.get_wave(ring_index)
             if len(wave) > 0 and wave["station"] == station and wave["channel"] == channel:
                 wave_queue.put(wave)
+                self.counter = 0
             else:
-                time.sleep(0.01)
+                time.sleep(1)
+                self.counter += 1
+               
                 
+    def check_status(self):
+        """ To check whether wave data is being recieved from earthworm."""
+        # Checks every 60 seconds to see if we are receiving data.
+        while True:
+            if self.STOP:
+                return
+            
+            if self.counter >= 20:
+                logging.warning("Not recieving wave data")
+            
+            time.sleep(60)
+            
+        
+             
     def start(self):
         """ Starts the thread to aquire wave data."""
-        self.thread.start()
+        self.recieve_thread.start()
+        self.check_status_thread.start()
         
     def stop(self):
         """ Stops the earthworm module in a clean way."""
         self.STOP = True
-        print('\n =============')
-        print('Exit Main Loop...')    
+        print('\n=============')
+        print('Stopping pyearthworm module...')    
 
         # Clean Exit
         self.data_mod.goodbye()
-        print("\nSTATUS: Stopping, you hit ctl+C. ")
+        logging.info("Stopped pyearthworm module")
        
 
 def main():
-    """ Main function of the program. It creates a thread for receieving data
-        and the GUI that contains the plot.
+    """ Main function of the program. It creates an instance of the waveacquirer class and an instance 
+        of the plotter class.
     """
     # Earthworm Module Data
     installation_id = 76  
