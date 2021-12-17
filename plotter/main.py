@@ -19,8 +19,10 @@ import threading
 # Station and channel. These values will be used at the start of the program.
 station = "SS60"
 channel = "HLN"
-# Queue of wave data
+# Queue of wave data for all stations
 wave_queue = Queue()
+# Queue for the station and channel that will be plotted
+station_queue  = Queue()
 # Plotting configuration
 plt.style.use('bmh')
 # Logging 
@@ -156,7 +158,7 @@ class PlotterApp:
         ax = fig.add_subplot(111)
         ax.set_title(f'Estación: {station}. Canal: {channel}')
         ax.set_xlabel(f'Tiempo ({unit})')
-        ax.set_ylabel('Frecuencia')
+        ax.set_ylabel('Amplitud')
         ax.set_xlim(self.time_lower_lim, self.time_size)
         ax.set_ylim(int(self.acc_lower_lim), int(self.acc_upper_lim))
         # Set xticks for the plot
@@ -179,7 +181,7 @@ class PlotterApp:
             
             The channel menu options are updated as well.
             
-            It also clears the wave_queue so that data for new stations can be plotted.
+            It also clears the station_queue so that data for new stations can be plotted.
         """
         global station, channel
         station = self.station_val.get()
@@ -204,7 +206,7 @@ class PlotterApp:
         """ Updates the plot after selecting a different channel in the program
             by using the channel menu and buttons.
             
-            It also clears the wave_queue so that data for a new station channel can be plotted.
+            It also clears the station_queue so that data for a new station channel can be plotted.
         """
         global channel
         channel = self.channel_val.get()
@@ -215,7 +217,7 @@ class PlotterApp:
         self.plot_stop()    
         self.restart_plot()
         
-        logging.info(f"Changed channel to {channel}. Current {station}")
+        logging.info(f"Changed channel to {channel}. Current station: {station}")
         
     def plot_data(self):
         """ Plot wave data from station"""
@@ -225,8 +227,8 @@ class PlotterApp:
         
         if self.PLOT:
             
-            if not wave_queue.empty():
-                wave = wave_queue.get()
+            if not station_queue.empty():
+                wave = station_queue.get()
 
                 # When the plot starts time_data needs to be updated dinamically. Once it reaches the time limit
                 # it is no longer necesary to update time_data as the new wave data that arrives will be superimposed
@@ -267,15 +269,16 @@ class PlotterApp:
                 self.lines.set_xdata(self.time_data)
                 self.lines.set_ydata(acc_data)
                 
-                wave_queue.task_done()
-                time.sleep(0.1)
+                station_queue.task_done()
                 self.canvas.draw()
                 if self.data_status > 0:
-                    self.cahnge_status()
                     self.data_status = 0
+                    if self.status_val.get() == "Desconectado":
+                        self.change_status()
             else:
-                logging.warning("wave queue is empty")
-                if self.data_status > 10:
+                if self.data_status > 2:
+                    logging.warning("Station queue is empty")
+                elif self.data_status > 10:
                     logging.info("No data in queue. Stopping plot.")
                     self.plot_stop()
                     self.change_status()
@@ -297,7 +300,7 @@ class PlotterApp:
             channel via ine if the buttons.
         """
         # Clear time and wave data
-        wave_queue.clear()
+        station_queue.clear()
         self.acc_data.clear()
         self.time_data.clear()
         # Reset counters
@@ -328,7 +331,7 @@ class PlotterApp:
             self.status_label.config(fg="red")
         else:
             self.status_val.set("Conectado")
-            self.station_label.config(fg="black")
+            self.status_label.config(fg="black")
         
     def start(self):
         """ Starts tkinter mainloop"""
@@ -353,14 +356,13 @@ class EarthwormWaveAcquirer:
                     f",ring: {ring}")
         
         self.recieve_thread = threading.Thread(target=self.recieve_wave, daemon=True)
+        self.filter_thread = threading.Thread(target=self.filter_data, daemon=True)
         self.check_status_thread = threading.Thread(target=self.check_status, daemon=True)
         
         self.STOP = False # flag to stop pyearthworm 
         
     def recieve_wave(self):
         """ Recieve wave data from Earthworm and put it in a queue.
-        
-            Only data from the selected station and channel will be plotted.
         """
         ring_index = 0
         self.counter = 0 # To keep track of whether data is being recieved.
@@ -369,13 +371,26 @@ class EarthwormWaveAcquirer:
                 return 
             
             wave = self.data_mod.get_wave(ring_index)
-            if len(wave) > 0 and wave["station"] == station and wave["channel"] == channel:
+            if len(wave) > 0:
                 wave_queue.put(wave)
                 self.counter = 0
             else:
                 time.sleep(1)
                 self.counter += 1
-               
+    
+    def filter_data(self):
+        """ Filters the wave_queue to only get data from a particular station and channel
+            and puts it in station_queue
+        """
+        while True:
+            if self.STOP:
+                return
+
+            wave = wave_queue.get()
+            if wave["station"] == station and wave["channel"] == channel:
+                station_queue.put(wave)
+            wave_queue.task_done()
+        
                 
     def check_status(self):
         """ To check whether wave data is being recieved from earthworm."""
@@ -388,16 +403,15 @@ class EarthwormWaveAcquirer:
                 logging.warning("Not recieving wave data")
             
             time.sleep(60)
-            
-        
              
     def start(self):
         """ Starts the thread to aquire wave data."""
         self.recieve_thread.start()
+        self.filter_thread.start()
         self.check_status_thread.start()
         
     def stop(self):
-        """ Stops the earthworm module in a clean way."""
+        """ Stops all threads and the earthworm module in a clean way."""
         self.STOP = True
         print('\n=============')
         print('Stopping pyearthworm module...')    
