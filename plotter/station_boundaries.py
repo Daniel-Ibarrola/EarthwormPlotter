@@ -5,13 +5,14 @@
 import numpy as np
 import PyEW
 # Standard library
+import argparse
 from collections import defaultdict
 import pickle
 import queue
 import time
 import threading
 
-# Stations Names 'SS60', 'S160', 'S260', 'S360', 'IM40', 'D170', 'D270'
+# SSN Stations Names 'SS60', 'S160', 'S260', 'S360', 'IM40', 'D170', 'D270'
 
 # Earthworm Module Data
 installation_id = 76  
@@ -22,19 +23,16 @@ debug = False
 # Earthworm module to recieve the data
 data_mod = PyEW.EWModule(wave_ring, module_id, installation_id, heart_beats, debug)
 data_mod.add_ring(1000)
-# Station and channel
-station = "SS60"
-channel = "HLN"
 # Queue of wave data
 wave_queue = queue.Queue()
-# Samples
-sample_rate = 200
-n_samples = 250
 # Flag to stop program
 STOP = False
 
 
 station_boundaries = defaultdict(dict)
+
+class EstacionInvalida(ValueError):
+    pass
 
 def get_boundaries():
     """ Populate station boundaries dictionary with the upper and lower limit
@@ -83,8 +81,20 @@ def main():
     """ Main function of the program. It creates a thread for receiveing data
         and another thread for processing and saving it.
     """
-    
     global STOP
+
+    parser = argparse.ArgumentParser(description="Graficador de estaciones de earthworm")
+    parser.add_argument("--estaciones", dest="stations", required=True,
+                        help="Estaciones que se van a graficar. Puede ser 'pozo' o 'cires'")
+
+    args = parser.parse_args()
+    if args.stations.lower() == "pozo":
+        stations_file = "./stations_pozo"
+    elif args.stations.lower() == "cires":
+        stations_file = "./stations_cires"
+    else:
+        raise EstacionInvalida("Nombre invalido para estaciones. Debe ser pozo o cires")
+
     
     t1 = threading.Thread(target=recieve_wave, daemon=True)
     t2 = threading.Thread(target=get_boundaries, daemon=True)
@@ -99,7 +109,7 @@ def main():
         STOP = True
         print("Stations Dictionary\n")
         print(dict(station_boundaries))
-        with open("station_boundaries", "wb") as f:
+        with open(stations_file, "wb") as f:
             pickle.dump(station_boundaries, f)
         print('\n\n=============')
         print('Exit Main Loop...')    

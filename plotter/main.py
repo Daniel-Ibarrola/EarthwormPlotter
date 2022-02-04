@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import PyEW
 # Standard library
+import argparse
 import logging
 import pickle
 import time
@@ -16,9 +17,7 @@ import threading
 
 # Stations Names 'SS60', 'S160', 'S260', 'S360', 'IM40', 'D170', 'D270'
 
-# Station and channel. These values will be used at the start of the program.
-station = "SS60"
-channel = "HLN"
+
 # Queue of wave data for all stations
 wave_queue = Queue()
 # Queue for the station and channel that will be plotted
@@ -39,22 +38,26 @@ rootLogger.addHandler(consoleHandler)
 rootLogger.setLevel(logging.INFO)
 
 
+class EstacionInvalida(ValueError):
+    pass
+
 ### The GUI class and methods    
 class PlotterApp:
     """ Class that handles the GUI."""
     
-    def __init__(self, root=tk.Tk()):
+    def __init__(self, stations_file, sample_rate, 
+                root=tk.Tk()):
         
          # Station data
-        self.station_boundaries, self.stations_dict = self.load_station_data()
+        self.station_boundaries, self.stations_dict = self.load_station_data(stations_file)
         
         # Data for Plotting
         self.acc_data = [] # List of lists where each list contains wave data for a given timestep.
         self.time_data = []
         self.time_step_counter = 0
         self.acc_data_counter = 0
-        self.wave_splitter = np.arange(0, 250, 2) # To take just half the samples
-        self.n_samples = 250
+        self.wave_splitter = np.arange(0, sample_rate, 2) # To take just half the samples
+        self.n_samples = sample_rate
         # Plot limits data
         self.acc_lower_lim = self.station_boundaries[station][channel][0]
         self.acc_upper_lim = self.station_boundaries[station][channel][1]
@@ -311,7 +314,7 @@ class PlotterApp:
         self.acc_upper_lim = self.station_boundaries[station][channel][1]
     
     @staticmethod    
-    def load_station_data(path="./station_boundaries"):
+    def load_station_data(path):
         """ Load station names and channels with it's boundaries as computed from the
             script station_boundaries.py. 
         """
@@ -425,6 +428,28 @@ def main():
     """ Main function of the program. It creates an instance of the waveacquirer class and an instance 
         of the plotter class.
     """
+    global channel, station
+
+    parser = argparse.ArgumentParser(description="Graficador de estaciones de earthworm")
+    parser.add_argument("--estaciones", dest="stations", required=True,
+                        help="Estaciones que se van a graficar. Puede ser 'pozo' o 'cires'")
+    parser.add_argument("--nmuestras", dest="srate", required=True,
+                        help="Numero de muestras por segundo de las estaciones")
+
+    args = parser.parse_args()
+    if args.stations.lower() == "pozo":
+        stations_file = "./stations_pozo"
+        # Station and channel. These values will be used at the start of the program.
+        station = "SS60"
+        channel = "HLN"
+    elif args.stations.lower() == "cires":
+        stations_file = "./stations_cires"
+        station = "CU80"
+        channel = "HLZ"
+    else:
+        raise EstacionInvalida("Nombre invalido para estaciones. Debe ser pozo o cires")
+
+    sample_rate = int(args.srate)
     # Earthworm Module Data
     installation_id = 76  
     module_id = 151
@@ -435,7 +460,7 @@ def main():
     wave_acquirer = EarthwormWaveAcquirer(wave_ring, module_id, installation_id, heart_beats, debug)
     wave_acquirer.start()
     
-    plotter = PlotterApp()
+    plotter = PlotterApp(stations_file, sample_rate)
     plotter.start()
     
     wave_acquirer.stop()
