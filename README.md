@@ -16,7 +16,14 @@ source ew/cires/params/ew_linux.bash
 ```bash
 conda acivate pyew
 ```
-3. go to /plotter and run the program:
+3. go to ./plotter and run the program main.py. It accepts the folowing arguments:
+
+- --estaciones. Can be "pozo" or "cires". This are thesations that will be plotted.
+
+- --nmuestras. The sample rate (samples/second) If "pozo" is selected it should be 250. If "cires" is selected it should be 100. However this may vary.
+
+Example usage
+
 ```bash
-python main.py
+python main.py --estaciones cires --nmuestras 100 
 ```
