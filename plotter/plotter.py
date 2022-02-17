@@ -9,21 +9,20 @@ import numpy as np
 import PyEW
 # Standard library
 import argparse
+from collections import defaultdict
 import logging
 import pickle
 import time
 import tkinter as tk
+from tkinter import ttk
 import threading
 
-# Stations Names 'SS60', 'S160', 'S260', 'S360', 'IM40', 'D170', 'D270'
-
-
-# Queue of wave data for all stations
-wave_queue = Queue()
 # Queue for the station and channel that will be plotted
 station_queue  = Queue()
 # Plotting configuration
 plt.style.use('bmh')
+#Plotting flag
+PLOT = False
 # Logging 
 logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
 rootLogger = logging.getLogger()
@@ -45,12 +44,19 @@ class EstacionInvalida(ValueError):
 class PlotterApp:
     """ Class that handles the GUI."""
     
-    def __init__(self, stations_file, sample_rate, 
+    def __init__(self, stations, sample_rate, 
                 root=tk.Tk()):
         
-         # Station data
-        self.station_boundaries, self.stations_dict = self.load_station_data(stations_file)
-        
+        # Station data
+        if isinstance(stations, str):
+            # Load from a file
+            self.station_boundaries, self.stations_dict = self.load_station_data(stations)
+        else:
+            self.station_boundaries = stations
+            self.stations_dict = {}
+            for st, ch in self.station_boundaries.items():
+                self.stations_dict[st] = list(ch.keys())
+
         # Data for Plotting
         self.acc_data = [] # List of lists where each list contains wave data for a given timestep.
         self.time_data = []
@@ -64,8 +70,6 @@ class PlotterApp:
         self.time_lower_lim = 0 
         self.time_upper_lim = 60 # time in seconds
         self.time_size = (self.n_samples / 2) * self.time_upper_lim # Size of time axis
-        # Plotting Flag
-        self.PLOT = False
         # To check if we have data in the queue. If it passes a treshold the stop_plot method will be called
         self.data_status = 0
         
@@ -73,8 +77,8 @@ class PlotterApp:
         self.root = root
         self.root.title('Graficador Earthworm')
         self.root.geometry("1500x600")
-        self.root.minsize(1500, 600)
-        self.root.maxsize(1500, 600)
+        # self.root.minsize(1500, 600)
+        # self.root.maxsize(1500, 600)
         self.root.configure(background='white')
         self.root.rowconfigure(0, minsize=400, weight=1)
         self.root.rowconfigure(1, minsize=150, weight=1)
@@ -118,8 +122,8 @@ class PlotterApp:
         self.station_options = list(self.stations_dict.keys())
         self.channel_options = self.stations_dict[station]
 
-        self.station_menu = tk.OptionMenu(self.options_frame, self.station_val, *self.station_options)
-        self.station_menu["menu"].configure(font=("calbiri", 15))
+        self.station_menu = ttk.Combobox(self.options_frame, textvariable=self.station_val, values=self.station_options)
+    
         self.channel_menu = tk.OptionMenu(self.options_frame, self.channel_val, *self.channel_options)
         self.channel_menu["menu"].configure(font=("calbiri", 15))
 
@@ -133,7 +137,7 @@ class PlotterApp:
         self.channel_label.grid(row=0, column=3, padx=5, pady=4)
         self.status_label.grid(row=0, column=4, padx=5, pady=4)
 
-        self.station_menu.grid(row=1, column=2, padx=2, pady=10, sticky="EW")
+        self.station_menu.grid(row=1, column=2, padx=2, pady=10, sticky="E")
         self.channel_menu.grid(row=1, column=3, padx=2, pady=10, sticky="EW")
 
         self.station_button.grid(row=2, column=2, pady=4)
@@ -224,11 +228,11 @@ class PlotterApp:
         
     def plot_data(self):
         """ Plot wave data from station"""
-
+        global PLOT
         update_vertical_range = True
         step = int(self.n_samples / 2)
         
-        if self.PLOT:
+        if PLOT:
             
             if not station_queue.empty():
                 wave = station_queue.get()
@@ -292,11 +296,13 @@ class PlotterApp:
     
     def plot_start(self):
         """ Change the flag to start plotting."""
-        self.PLOT = True
+        global PLOT
+        PLOT = True
 
     def plot_stop(self):
         """ Change the flag to stop plotting."""
-        self.PLOT = False
+        global PLOT
+        PLOT = False
         
     def restart_plot(self):
         """ Restarts plot data so a new plot can be drawn when changing the station and/or
@@ -359,7 +365,6 @@ class EarthwormWaveAcquirer:
                     f",ring: {ring}")
         
         self.recieve_thread = threading.Thread(target=self.recieve_wave, daemon=True)
-        self.filter_thread = threading.Thread(target=self.filter_data, daemon=True)
         self.check_status_thread = threading.Thread(target=self.check_status, daemon=True)
         
         self.STOP = False # flag to stop pyearthworm 
@@ -367,34 +372,23 @@ class EarthwormWaveAcquirer:
     def recieve_wave(self):
         """ Recieve wave data from Earthworm and put it in a queue.
         """
+        global PLOT
         ring_index = 0
         self.counter = 0 # To keep track of whether data is being recieved.
         while True:
             if self.STOP:
                 return 
-            
-            wave = self.data_mod.get_wave(ring_index)
-            if len(wave) > 0:
-                wave_queue.put(wave)
-                self.counter = 0
-            else:
-                time.sleep(1)
-                self.counter += 1
-    
-    def filter_data(self):
-        """ Filters the wave_queue to only get data from a particular station and channel
-            and puts it in station_queue
-        """
-        while True:
-            if self.STOP:
-                return
-
-            wave = wave_queue.get()
-            if wave["station"] == station and wave["channel"] == channel:
-                station_queue.put(wave)
-            wave_queue.task_done()
-        
                 
+            if PLOT:
+                wave = self.data_mod.get_wave(ring_index)
+                if len(wave) > 0:
+                    if wave["station"] == station and wave["channel"] == channel:
+                        station_queue.put(wave)
+                    self.counter = 0
+                else:
+                    time.sleep(1)
+                    self.counter += 1
+                    
     def check_status(self):
         """ To check whether wave data is being recieved from earthworm."""
         # Checks every 60 seconds to see if we are receiving data.
@@ -410,7 +404,6 @@ class EarthwormWaveAcquirer:
     def start(self):
         """ Starts the thread to aquire wave data."""
         self.recieve_thread.start()
-        self.filter_thread.start()
         self.check_status_thread.start()
         
     def stop(self):
@@ -423,6 +416,37 @@ class EarthwormWaveAcquirer:
         self.data_mod.goodbye()
         logging.info("Stopped pyearthworm module")
        
+    def get_stations(self):
+        """ Get a dictionary with the upper and lower limit of each station and channel.
+        """
+        ring_index = 0
+        station_boundaries = defaultdict(dict)
+        start_time = time.time()
+        logging.info("Getting stations data")
+        while True:
+            wave = self.data_mod.get_wave(ring_index)
+            if len(wave) > 0:
+                wave_min = np.min(wave["data"])
+                wave_max = np.max(wave["data"])
+                
+                try:
+                    len(station_boundaries[wave["station"]][wave["channel"]])
+                except KeyError:
+                    station_boundaries[wave["station"]][wave["channel"]] = [wave_min, wave_max]
+                
+                try:
+                    if wave_min < station_boundaries[wave["station"]][wave["channel"]][0]:
+                        station_boundaries[wave["station"]][wave["channel"]][0] = wave_min
+                    if wave_max > station_boundaries[wave["station"]][wave["channel"]][1]:
+                        station_boundaries[wave["station"]][wave["channel"]][1] = wave_max
+                except KeyError:
+                    pass 
+                
+                # Break after 60 seconds
+                if time.time() - start_time >= 60:
+                    break
+        
+        return station_boundaries
 
 def main():
     """ Main function of the program. It creates an instance of the waveacquirer class and an instance 
@@ -433,23 +457,15 @@ def main():
     parser = argparse.ArgumentParser(description="Graficador de estaciones de earthworm")
     parser.add_argument("--estaciones", dest="stations", required=True,
                         help="Estaciones que se van a graficar. Puede ser 'pozo' o 'cires'")
-    parser.add_argument("--nmuestras", dest="srate", required=True,
-                        help="Numero de muestras por segundo de las estaciones")
-
+    
     args = parser.parse_args()
     if args.stations.lower() == "pozo":
-        stations_file = "./stations_pozo"
-        # Station and channel. These values will be used at the start of the program.
-        station = "SS60"
-        channel = "HLN"
+        sample_rate = 250
     elif args.stations.lower() == "cires":
-        stations_file = "./stations_cires"
-        station = "CU80"
-        channel = "HLZ"
+        sample_rate = 100
     else:
         raise EstacionInvalida("Nombre invalido para estaciones. Debe ser pozo o cires")
 
-    sample_rate = int(args.srate)
     # Earthworm Module Data
     installation_id = 76  
     module_id = 151
@@ -458,9 +474,13 @@ def main():
     debug = False
 
     wave_acquirer = EarthwormWaveAcquirer(wave_ring, module_id, installation_id, heart_beats, debug)
-    wave_acquirer.start()
+    stations_dict = wave_acquirer.get_stations()
+    # Get station and a channel
+    station = list(stations_dict.keys())[0]
+    channel = list(stations_dict[station].keys())[0]
     
-    plotter = PlotterApp(stations_file, sample_rate)
+    wave_acquirer.start()
+    plotter = PlotterApp(stations_dict, sample_rate)
     plotter.start()
     
     wave_acquirer.stop()

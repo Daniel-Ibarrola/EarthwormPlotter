@@ -12,7 +12,6 @@ import queue
 import time
 import threading
 
-# SSN Stations Names 'SS60', 'S160', 'S260', 'S360', 'IM40', 'D170', 'D270'
 
 # Earthworm Module Data
 installation_id = 76  
